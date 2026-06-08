@@ -1,0 +1,19 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ShortcutIme.App/ShortcutIme.App.csproj">
+      <Platform Project="x86" />
+    </Project>
+    <Project Path="src/ShortcutIme.Core/ShortcutIme.Core.csproj" />
+    <Project Path="src/ShortcutIme.Evaluation/ShortcutIme.Evaluation.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ShortcutIme.Core.Tests/ShortcutIme.Core.Tests.csproj" />
+    <Project Path="tests/ShortcutIme.Evaluation.Tests/ShortcutIme.Evaluation.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/ShortcutIme.Measure/ShortcutIme.Measure.csproj" />
+    <Project Path="tools/ShortcutIme.Eval/ShortcutIme.Eval.csproj" />
+    <Project Path="tools/ShortcutIme.DataGen/ShortcutIme.DataGen.csproj" />
+    <Project Path="tools/ShortcutIme.Lm/ShortcutIme.Lm.csproj" />
+  </Folder>
+</Solution>

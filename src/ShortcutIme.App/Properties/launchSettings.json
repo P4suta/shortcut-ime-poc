@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "ShortcutIme.App (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "ShortcutIme.App (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
