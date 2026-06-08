@@ -48,7 +48,11 @@ public sealed partial class MainPage : Page
     private void CommitSelected()
     {
         ViewModel.Commit();
-        InputBox.Text = "";
+        if (ViewModel.InputConsumed)
+        {
+            InputBox.Text = ""; // 入力を組み終えた時だけクリア（逐次確定中は読みを保持）。
+        }
+
         InputBox.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
     }
 

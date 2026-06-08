@@ -14,26 +14,30 @@ public sealed record CandidateChoice(int Number, string Surface)
 }
 
 /// <summary>
-/// 文章一括変換の画面ロジック。文の読み（フルローマ字／子音）を入力すると、
-/// <see cref="PhraseConverter"/> がビタビ＋連接コストで n-best を出し、char+word リランカーで
-/// 並べ替えた候補一覧を提示する。選んだ候補を確定で文へつなげる。
+/// 逐次文節確定の画面ロジック（docs/stage5-incremental-commit.md）。文の読み（フルローマ字／子音）を入力すると、
+/// <see cref="LookaheadConverter"/> が「確定済み左文脈の下での次文節候補」を提示する。1つ確定すると左文脈に積まれ、
+/// 残り入力の次文節候補へ更新される。これを繰り返して文を組む（候補UIで per-step ほぼ確実に正解が top-k に入る）。
 /// </summary>
 public partial class MainPageViewModel : ObservableObject
 {
-    // リランキングの運用パラメータ（docs/stage1-wordlm.md §5 の frozen 値）。
     private const int NBest = 100;
     // 活用辞書(dictionary98)込みで再学習した word.bin に対し dev で再調整（tune-interp）。
     private const double LambdaChar = 50.0;
     private const double LambdaWord = 500.0;
-    private const int MaxCandidates = 30; // 一覧に出す異なり表層の上限。
+    private const int MaxCandidates = 30;   // 一覧に出す異なり表層の上限。
+    private const int IncSegmentPenalty = 3000; // 逐次の過分割抑制（docs/stage5）。
 
-    private readonly RomajiEncoder _romaji = new();
+    private LookaheadConverter? _incremental;
+    private string _input = "";
+    private int _pos;
+    private readonly List<Candidate> _committed = []; // 確定済み左文脈（文節列）。
+    private readonly List<NextSegment> _displayed = []; // Candidates と並行（dedup 後）。確定時の長さ参照用。
 
-    private PhraseConverter? _converter;
-    private IReranker _reranker = IdentityReranker.Instance;
-
-    /// <summary>リランク後の候補一覧（最尤が先頭）。同一表層は先頭出現のみ。</summary>
+    /// <summary>次文節の候補一覧（最尤が先頭）。同一表層は先頭出現のみ。</summary>
     public ObservableCollection<CandidateChoice> Candidates { get; } = [];
+
+    /// <summary>現在の入力をすべて消費し終えたか（view が入力欄をクリアする判断に使う）。</summary>
+    public bool InputConsumed => _pos >= _input.Length;
 
     /// <summary>一覧で選択中の候補インデックス（確定対象）。候補が無ければ -1。</summary>
     [ObservableProperty]
@@ -59,10 +63,9 @@ public partial class MainPageViewModel : ObservableObject
         try
         {
             var dictDir = Path.Combine(AppContext.BaseDirectory, "dict");
-            (_converter, _reranker) = await Task.Run(() => Build(dictDir));
+            _incremental = await Task.Run(() => Build(dictDir));
             IsReady = true;
-            var lm = _reranker is LmReranker ? "char+word LM リランカー有効" : "リランカーなし（LM blob 未配置）";
-            StatusText = $"準備完了（{lm}）。文の読みをローマ字/子音で打ち、Enter で確定して文をつなげます。";
+            StatusText = "準備完了。文の読みをローマ字/子音で打つと文節候補が出ます。Enter/ダブルクリックで文節を確定し、左から組み立てます。";
         }
         catch (IOException ex)
         {
@@ -70,7 +73,7 @@ public partial class MainPageViewModel : ObservableObject
         }
     }
 
-    private static (PhraseConverter Converter, IReranker Reranker) Build(string dictDir)
+    private static LookaheadConverter Build(string dictDir)
     {
         var triePath = Path.Combine(dictDir, "trie.bin");
 
@@ -88,22 +91,21 @@ public partial class MainPageViewModel : ObservableObject
         var connectionPath = Path.Combine(dictDir, "connection_single_column.txt");
         var connection = File.Exists(connectionPath) ? ConnectionMatrix.Load(connectionPath) : null;
 
-        // Measure のスイープで全文一致が得られた設定（seg=0 / skip=500）。
-        var converter = new PhraseConverter(trie, connection, segmentPenalty: 0, vowelSkipPenalty: 500);
-        return (converter, BuildReranker(dictDir));
+        // 逐次は過分割抑制のため segPenalty を効かせる（docs/stage5-incremental-commit.md）。
+        var converter = new PhraseConverter(trie, connection, segmentPenalty: IncSegmentPenalty, vowelSkipPenalty: 500);
+        return new LookaheadConverter(converter, BuildLmComponents(dictDir), NBest);
     }
 
-    // char.bin + word.bin が配置されていれば char+word 補間リランカーを、無ければ identity を返す。
-    // 両 LM は表層しか見ないので方式/母音レベルに依存しない（docs/stage1-wordlm.md）。
-    private static IReranker BuildReranker(string dictDir)
+    // char.bin + word.bin があれば char+word の成分を返す（確定左文脈の継続採点に使う）。無ければ空＝コストのみで並べる。
+    private static List<LmReranker.Component> BuildLmComponents(string dictDir)
     {
-        var components = new List<(WordNGramLm Lm, double Lambda)>();
+        var components = new List<LmReranker.Component>();
         TryAddLm(components, Path.Combine(dictDir, "char.bin"), LambdaChar);
         TryAddLm(components, Path.Combine(dictDir, "word.bin"), LambdaWord);
-        return components.Count > 0 ? new LmReranker(components) : IdentityReranker.Instance;
+        return components;
     }
 
-    private static void TryAddLm(List<(WordNGramLm Lm, double Lambda)> components, string path, double lambda)
+    private static void TryAddLm(List<LmReranker.Component> components, string path, double lambda)
     {
         if (!File.Exists(path))
         {
@@ -112,11 +114,11 @@ public partial class MainPageViewModel : ObservableObject
 
         try
         {
-            components.Add((WordNGramLm.Load(path), lambda));
+            components.Add(new LmReranker.Component(WordNGramLm.Load(path), lambda));
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException)
         {
-            // 壊れた blob は無視してリランカーから外す（変換自体は WFST 1-best で動く）。
+            // 壊れた blob は無視（変換はコストのみで動く）。
         }
     }
 
@@ -138,29 +140,33 @@ public partial class MainPageViewModel : ObservableObject
         return trie;
     }
 
-    /// <summary>入力（読み）を n-best 変換し、char+word リランカーで並べ替えた候補一覧を更新する。</summary>
+    /// <summary>入力（読み）を新たに受け取り、先頭文節の候補一覧を出す（位置・左文脈をリセット）。</summary>
     public void UpdateInput(string input)
     {
+        _input = input ?? "";
+        _pos = 0;
+        _committed.Clear();
+        RefreshCandidates();
+    }
+
+    // 現在位置・左文脈での次文節候補を出す（表層で dedup）。
+    private void RefreshCandidates()
+    {
         Candidates.Clear();
+        _displayed.Clear();
         SelectedCandidateIndex = -1;
-        if (_converter is null || string.IsNullOrEmpty(input))
+        if (_incremental is null || _pos >= _input.Length)
         {
             return;
         }
 
-        var nbest = _converter.ConvertNBest(input, NBest);
-        if (nbest.Count == 0)
-        {
-            return;
-        }
-
-        // 異なる分割が同じ表層を生むため、表層で dedup（順位は維持）し上位 MaxCandidates 件を出す。
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var hypothesis in _reranker.Rerank(input, "", nbest))
+        foreach (var next in _incremental.NextCandidates(_input, _pos, _committed, MaxCandidates * 2))
         {
-            if (seen.Add(hypothesis.Surface))
+            if (seen.Add(next.Candidate.Surface))
             {
-                Candidates.Add(new CandidateChoice(Candidates.Count + 1, hypothesis.Surface));
+                _displayed.Add(next);
+                Candidates.Add(new CandidateChoice(Candidates.Count + 1, next.Candidate.Surface));
                 if (Candidates.Count >= MaxCandidates)
                 {
                     break;
@@ -174,17 +180,33 @@ public partial class MainPageViewModel : ObservableObject
         }
     }
 
-    /// <summary>選択中（既定は最尤）の候補を確定文へ追記する。</summary>
+    /// <summary>選択中の文節を確定文へ追記し、左文脈へ積んで残り入力の次文節候補へ更新する。</summary>
     public void Commit()
     {
-        if ((uint)SelectedCandidateIndex >= (uint)Candidates.Count)
+        if ((uint)SelectedCandidateIndex >= (uint)_displayed.Count)
         {
             return;
         }
 
-        ComposedText += Candidates[SelectedCandidateIndex].Surface;
-        Candidates.Clear();
-        SelectedCandidateIndex = -1;
+        var chosen = _displayed[SelectedCandidateIndex];
+        ComposedText += chosen.Candidate.Surface;
+        _committed.Add(chosen.Candidate);
+        _pos += chosen.Length;
+
+        if (_pos >= _input.Length)
+        {
+            // 入力を消費し切った：状態をリセット（view が入力欄をクリアする）。
+            _input = "";
+            _pos = 0;
+            _committed.Clear();
+            Candidates.Clear();
+            _displayed.Clear();
+            SelectedCandidateIndex = -1;
+        }
+        else
+        {
+            RefreshCandidates();
+        }
     }
 
     /// <summary>候補一覧の選択を上下に移動する（範囲内にクランプ）。</summary>

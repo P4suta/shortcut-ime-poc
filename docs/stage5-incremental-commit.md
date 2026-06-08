@@ -27,8 +27,17 @@ LM スコア並べ替え層を4回潰した後（`docs/stage4-lightgbm-ranker.md
 - **無人 greedy ≈ cw**（時に僅かに上＝look-ahead が first-bunsetsu で稀に有利）。単一文では予想どおり超えない。
 - **候補UI 94〜100% / per-step 98〜100%**＝文節ごとに top-5 を見せれば、ユーザーはほぼ確実に正文を組める。全集合換算の下界は seed ≈ 0.84×0.96=81%、generated ≈ 0.68×0.94=64%（一発 cw 換算 71%/44%）＝**実アシストで +10〜20pt**。
 
+## App 配線（製品化・要実機検証）
+[MainPageViewModel](../src/ShortcutIme.App/ViewModels/MainPageViewModel.cs) を全文一括から**逐次候補UI**へ変更：読みを打つ→`LookaheadConverter`（segPen=3000・char+word）で先頭文節候補→Enter/ダブルクリックで確定→左文脈に積み残り入力の次文節候補へ更新→消費し切ったら入力欄クリア。`InputConsumed` で view がクリア判断（確定中は読みを保持）。ビルド緑（App 含む 0 警告）。**WinUI ランタイムは本環境で起動不可＝実機での操作確認は要**（ロジックは IncrementalSimulator のテストで担保）。
+
+## 絶対指標（全ケース基準・task3）
+`incremental` 出力に「対象（gold∈n-best）」と「全（圏外も分母）」の両方を表示。generated p=0.5：候補UI **対象 94% / 全 64%**（一発 cw top-1 対象65%/全44%）＝全集合で **+20pt**。seed p=0.5：候補UI 全 81%（cw 全71%）。「全」基準も per-step 列挙が全文 n-best 超えで拾う上振れは未計上＝下界。
+
+## 語彙拡大は negative（task2・min_freq）
+活用辞書 dictionary98 の min_freq を 3→2 にして再生成（4,339→6,430）しても、**seed/generated の構造欠落は不変**（seed16%/gen26%、同じ例「〜送ります」「変更してください」等）。これらは livedoor ニュースに乏しい業務メール調の語＝**コーパス領域ミスマッチ**で、harvest の深さ（min_freq）では埋まらない。pollution が増えるだけなので min_freq=3 に復帰。真の vocab lever は**領域一致コーパス**（別タスク）、組合せ beam 由来分は逐次 per-step 列挙が拾う。
+
 ## 含意・申し送り
-- **入力アシストの正しい UX＝逐次候補確定**：本データで構造的に効く。次は App（WinUI）を「文節ごとに top-k 候補を出し確定→左文脈を次へ」へ。MainPageViewModel に `LookaheadConverter`＋`LmStepScorer`／`NegLogProbContinuation` を配線。
+- **入力アシストの正しい UX＝逐次候補確定**：本データで構造的に効く（App 配線済み）。実機で操作確認し、確定中の読み表示（消費済み prefix のグレーアウト等）を磨くと良い。
 - **さらなる上振れ（未計測）**：候補UIの分母は gold∈whole-sentence-n-best。per-step 列挙は全文 n-best の beam が無いため、**全文 n-best が落とした文節も拾える**（Step0 で見た「組合せ beam 由来の構造欠落」）。独立に gold 文節分割を与えれば候補UI天井はさらに上がる見込み。
 - **無人精度の真フロンティアはモデルでなくデータ/評価**：文間 leftContext（確定済み左文＝今は単一文評価で測れない）＋実打鍵キーログ。これが揃って初めて Transformer 等が正当化（[[reranking-roadmap]]）。
 - Step4（PhraseConverter と IncrementalConverter の emission 共有ヘルパ抽出）は、本命の look-ahead が PhraseConverter を直接再利用するため重複は IncrementalConverter（baseline）の数行のみ＝保留。

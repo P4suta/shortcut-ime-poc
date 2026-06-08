@@ -1051,14 +1051,17 @@ void Incremental()
         stepTotal += o.Steps;
     }
 
+    var total = considered + goldOut;
     double Pct(int x) => considered == 0 ? 0.0 : (double)x / considered;
+    double PctAll(int x) => total == 0 ? 0.0 : (double)x / total;
     Console.WriteLine($"== incremental[{mode}]（訓令式・cw λ={lc}/{lw}・{NBest}-best・topK={topK}・segPen={segPen}・keepRate={rate}・seed={seed}・{Path.GetFileName(testSetPath)}）==");
-    Console.WriteLine($"  対象（gold∈n-best）: {considered}（gold圏外で除外 {goldOut}）");
-    Console.WriteLine($"  一発 cw top-1            : {Pct(oneShot),6:P0}（{oneShot}/{considered}）");
-    Console.WriteLine($"  逐次 greedy 全文一致(無人): {Pct(greedyExact),6:P0}（{greedyExact}/{considered}） dead-end {Pct(greedyDead),5:P0}");
-    Console.WriteLine($"  逐次 oracle@{topK} 全step命中(候補UI): {Pct(oracleAll),6:P0}（{oracleAll}/{considered}） per-step {(stepTotal == 0 ? 0 : (double)stepHits / stepTotal),5:P0}");
+    Console.WriteLine($"  対象（gold∈n-best）: {considered}（gold圏外で除外 {goldOut}、全 {total}）");
+    Console.WriteLine($"  一発 cw top-1            : 対象 {Pct(oneShot),5:P0} / 全 {PctAll(oneShot),5:P0}（{oneShot}/{total}）");
+    Console.WriteLine($"  逐次 greedy 全文一致(無人): 対象 {Pct(greedyExact),5:P0} / 全 {PctAll(greedyExact),5:P0} dead-end {Pct(greedyDead),5:P0}");
+    Console.WriteLine($"  逐次 oracle@{topK} 全step命中(候補UI): 対象 {Pct(oracleAll),5:P0} / 全 {PctAll(oracleAll),5:P0}（{oracleAll}/{total}） per-step {(stepTotal == 0 ? 0 : (double)stepHits / stepTotal),5:P0}");
     Console.WriteLine();
-    Console.WriteLine("※ 無人比較は『逐次greedy全文一致 vs 一発cw top-1』（apples-to-apples）。oracle@k は step毎kショットで構造的に逐次有利＝候補UI成功率の上限の目安。");
+    Console.WriteLine("※ 無人比較は『逐次greedy全文一致 vs 一発cw top-1』。oracle@k は step毎kショットで逐次有利＝候補UI成功率の上限目安。");
+    Console.WriteLine("※ 「全」基準は gold∈n-best 圏外も分母に含む絶対値（下界。per-step 列挙が全文n-best超えで拾う上振れは未計上）。");
 }
 
 // diagnose 本体：cw の誤りを「到達性欠落(beam/構造)」「順位ミス(同音異字/読み違い/記号数字)」に分類し伸びしろの所在を特定。
