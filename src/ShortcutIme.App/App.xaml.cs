@@ -36,12 +36,33 @@ public partial class App : Application
     public static nint WindowHandle =>
         WinRT.Interop.WindowNative.GetWindowHandle(Window);
 
+    private static readonly string LogPath =
+        System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log");
+
+    /// <summary>起動診断ログ（無音終了の原因切り分け用）。exe フォルダの startup.log へ追記。</summary>
+    private static void Log(string message)
+    {
+        try
+        {
+            System.IO.File.AppendAllText(LogPath, $"{DateTime.Now:HH:mm:ss.fff} {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // ログ失敗は無視（診断目的のみ）。
+        }
+    }
+
     /// <summary>
     /// Initializes the singleton application object.
     /// </summary>
     public App()
     {
+        Log("App() ctor 開始");
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log($"AppDomain 未処理例外: {e.ExceptionObject}");
+        TaskScheduler.UnobservedTaskException += (_, e) => { Log($"未観測タスク例外: {e.Exception}"); e.SetObserved(); };
+        UnhandledException += (_, e) => Log($"XAML 未処理例外: {e.Message}\n{e.Exception}");
         InitializeComponent();
+        Log("App() ctor 完了");
     }
 
     /// <summary>
@@ -50,8 +71,19 @@ public partial class App : Application
     /// <param name="args">Details about the launch request and process.</param>
     protected override void OnLaunched(Microsoft.UI.Xaml.LaunchActivatedEventArgs args)
     {
-        Window = new MainWindow();
-        DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-        Window.Activate();
+        try
+        {
+            Log("OnLaunched 開始");
+            Window = new MainWindow();
+            Log("MainWindow 構築完了");
+            DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            Window.Activate();
+            Log("Window.Activate 完了");
+        }
+        catch (Exception ex)
+        {
+            Log($"OnLaunched 例外: {ex}");
+            throw;
+        }
     }
 }
