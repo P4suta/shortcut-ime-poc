@@ -1,5 +1,11 @@
 # ShortcutIme — 子音ショートカット日本語入力アシスト
 
+[![CI](https://github.com/P4suta/shortcut-ime-poc/actions/workflows/ci.yml/badge.svg)](https://github.com/P4suta/shortcut-ime-poc/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/P4suta/shortcut-ime-poc/actions/workflows/codeql.yml/badge.svg)](https://github.com/P4suta/shortcut-ime-poc/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/)
+[![WinUI 3](https://img.shields.io/badge/WinUI-3-0078D4)](https://learn.microsoft.com/windows/apps/winui/winui3/)
+
 子音だけ（または子音＋任意の母音）で日本語を高速入力する**入力補助ツール**。
 中国語ピンインの「簡拼（声母だけ入力 → 候補選択）」を日本語でやる試み。
 

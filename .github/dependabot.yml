@@ -1,0 +1,18 @@
+version: 2
+updates:
+  # NuGet（中央パッケージ管理：Directory.Packages.props を更新）
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+
+  # GitHub Actions のワークフローで使う action の更新
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"

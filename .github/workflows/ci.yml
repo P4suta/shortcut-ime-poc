@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # Core / Evaluation はいずれも純 net10.0（UI 非依存）なので Linux で完結する。
+      # WinUI の App プロジェクトは Windows + Windows App SDK が要るため CI からは除外。
+      - name: Test (Core)
+        run: dotnet test tests/ShortcutIme.Core.Tests/ShortcutIme.Core.Tests.csproj -c Release --logger "console;verbosity=normal"
+
+      - name: Test (Evaluation)
+        run: dotnet test tests/ShortcutIme.Evaluation.Tests/ShortcutIme.Evaluation.Tests.csproj -c Release --logger "console;verbosity=normal"
