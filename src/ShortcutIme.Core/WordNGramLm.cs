@@ -134,6 +134,33 @@ public sealed class WordNGramLm
         return NegLogProb(TokenizeReading(segments), leftContext);
     }
 
+    /// <summary>
+    /// 確定済み左文脈 <paramref name="left"/> の下で、続く <paramref name="next"/> の負の対数尤度（<b>open continuation</b>）。
+    /// 逐次文節確定で「左文脈を踏まえて次の1文節」を採点するための seam＝<c>leftContext</c> を実信号にする本体。
+    /// left は prev を進めるためだけに使い（既確定ぶんのコストは加えない）、<b>EOS を踏まない</b>（続けることを罰しない）。
+    /// 全文 <see cref="NegLogProb(IReadOnlyList{Candidate},string)"/>（BOS→…→EOS）とは EOS と left 内部コストの有無で異なる。
+    /// </summary>
+    public double NegLogProbContinuation(IReadOnlyList<Candidate> next, IReadOnlyList<Candidate> left, bool overReading = false)
+    {
+        ArgumentNullException.ThrowIfNull(next);
+        ArgumentNullException.ThrowIfNull(left);
+        var prev = BosId;
+        foreach (var token in overReading ? TokenizeReading(left) : Tokenize(left))
+        {
+            prev = _id.GetValueOrDefault(token, -1); // 左文脈は prev を進めるのみ（未知語は文脈リセット）。
+        }
+
+        var sum = 0.0;
+        foreach (var token in overReading ? TokenizeReading(next) : Tokenize(next))
+        {
+            var wid = _id.GetValueOrDefault(token, -1);
+            sum += StepNeg(prev, wid);
+            prev = wid;
+        }
+
+        return sum; // EOS は踏まない。
+    }
+
     // 文節列をトークン列へ。word/char が切り替わる唯一の箇所。
     private IEnumerable<string> Tokenize(IReadOnlyList<Candidate> segments)
     {

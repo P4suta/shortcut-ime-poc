@@ -212,6 +212,14 @@ if (rerankerName == "diagnose")
     return;
 }
 
+// incremental: 逐次文節確定（確定左文脈つき）を一発全文 cw と比較。無人 greedy（apples-to-apples）＋候補UI oracle@k。
+// args[4]=char, args[5]=word, args[6]=λ_char(50), args[7]=λ_word(500), args[8]=topK(5), args[9]=keepRate(0.5), args[10]=seed(0)。
+if (rerankerName == "incremental")
+{
+    Incremental();
+    return;
+}
+
 (RomajiScheme Scheme, EvalInputMode Mode)[] profiles =
 [
     (RomajiScheme.Kunrei, EvalInputMode.Consonant),
@@ -984,6 +992,73 @@ void EvalReading()
 
     Console.WriteLine();
     Console.WriteLine("※ cwr−cw が読み feature の正味効果。seed を重視（generated は n-gram の best case）。");
+}
+
+// incremental 本体：逐次文節確定（確定左文脈）を一発全文 cw と比較。無人 greedy（公平）＋候補UI oracle@k。
+void Incremental()
+{
+    var charLm = WordNGramLm.Load(lmArg ?? throw new ArgumentException("char.bin が必要（args[4]）"));
+    var wordLm = WordNGramLm.Load(args.Length > 5 ? args[5] : throw new ArgumentException("word.bin が必要（args[5]）"));
+    var lc = args.Length > 6 && double.TryParse(args[6], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pc) ? pc : 50.0;
+    var lw = args.Length > 7 && double.TryParse(args[7], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pw) ? pw : 500.0;
+    var topK = args.Length > 8 && int.TryParse(args[8], out var tk) ? tk : 5;
+    var rate = args.Length > 9 && double.TryParse(args[9], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var pr) ? pr : 0.5;
+    var seed = args.Length > 10 && int.TryParse(args[10], out var sd) ? sd : 0;
+    // segmentPenalty は逐次レジームの要 knob（全文 DP の EOS+大域均衡を肩代わり＝短断片の過分割を抑える）。
+    // gold 分割・一発・逐次を同一 segPenalty で揃え regime 効果を統制比較する。args[11]（既定 3000）。
+    var segPen = args.Length > 11 && int.TryParse(args[11], out var sp) ? sp : 3000;
+    var mode = args.Length > 12 ? args[12].ToLowerInvariant() : "lookahead"; // lookahead | single
+    const RomajiScheme scheme = RomajiScheme.Kunrei;
+    LmReranker.Component[] comps = [new LmReranker.Component(charLm, lc), new LmReranker.Component(wordLm, lw)];
+    var cw = new LmReranker(comps);
+    var expConv = new PhraseConverter(trie, connection, segPen, VowelSkipPenalty);
+    INextSegmentSource source = mode == "single"
+        ? new IncrementalConverter(trie, connection, new LmStepScorer(comps), segPen, VowelSkipPenalty)
+        : new LookaheadConverter(expConv, comps, NBest);
+    var sim = new IncrementalSimulator(source);
+
+    int considered = 0, goldOut = 0, oneShot = 0, greedyExact = 0, greedyDead = 0, oracleAll = 0;
+    long stepHits = 0, stepTotal = 0;
+    foreach (var c in cases)
+    {
+        var input = harness.EncodeInput(c.Reading, scheme, rate, seed);
+        if (input.Length == 0)
+        {
+            continue;
+        }
+
+        var nbest = expConv.ConvertNBest(input, NBest);
+        var goldHyp = nbest.FirstOrDefault(h => h.Surface == c.Sentence);
+        if (goldHyp is null)
+        {
+            goldOut++;
+            continue; // gold∈n-best のみ対象（seg-check と同じ分母）。同一 segPenalty で gold 分割も得る。
+        }
+
+        considered++;
+        if (cw.Rerank(input, "", nbest) is { Count: > 0 } r && r[0].Surface == c.Sentence)
+        {
+            oneShot++;
+        }
+
+        var g = sim.RunGreedy(input, c.Sentence);
+        if (g.ExactMatch) { greedyExact++; }
+        if (g.DeadEnd) { greedyDead++; }
+
+        var o = sim.RunOracleTopK(input, goldHyp.Segments, goldHyp.SegmentLengths ?? [], topK);
+        if (o.AllHit) { oracleAll++; }
+        stepHits += o.Hits;
+        stepTotal += o.Steps;
+    }
+
+    double Pct(int x) => considered == 0 ? 0.0 : (double)x / considered;
+    Console.WriteLine($"== incremental[{mode}]（訓令式・cw λ={lc}/{lw}・{NBest}-best・topK={topK}・segPen={segPen}・keepRate={rate}・seed={seed}・{Path.GetFileName(testSetPath)}）==");
+    Console.WriteLine($"  対象（gold∈n-best）: {considered}（gold圏外で除外 {goldOut}）");
+    Console.WriteLine($"  一発 cw top-1            : {Pct(oneShot),6:P0}（{oneShot}/{considered}）");
+    Console.WriteLine($"  逐次 greedy 全文一致(無人): {Pct(greedyExact),6:P0}（{greedyExact}/{considered}） dead-end {Pct(greedyDead),5:P0}");
+    Console.WriteLine($"  逐次 oracle@{topK} 全step命中(候補UI): {Pct(oracleAll),6:P0}（{oracleAll}/{considered}） per-step {(stepTotal == 0 ? 0 : (double)stepHits / stepTotal),5:P0}");
+    Console.WriteLine();
+    Console.WriteLine("※ 無人比較は『逐次greedy全文一致 vs 一発cw top-1』（apples-to-apples）。oracle@k は step毎kショットで構造的に逐次有利＝候補UI成功率の上限の目安。");
 }
 
 // diagnose 本体：cw の誤りを「到達性欠落(beam/構造)」「順位ミス(同音異字/読み違い/記号数字)」に分類し伸びしろの所在を特定。

@@ -144,15 +144,20 @@ public sealed class PhraseConverter
         foreach (var end in final)
         {
             var segments = new List<Candidate>();
+            var lengths = new List<int>();
             var current = end;
+            var pos = length; // この部分経路の終端位置。各文節の入力長 = pos - PrevPos。
             while (current.PrevPos >= 0)
             {
                 segments.Add(current.Word!);
+                lengths.Add(pos - current.PrevPos);
+                pos = current.PrevPos;
                 current = partials[current.PrevPos][current.PrevIndex];
             }
 
             segments.Reverse();
-            hypotheses.Add(new Hypothesis(segments, end.Cost));
+            lengths.Reverse();
+            hypotheses.Add(new Hypothesis(segments, end.Cost, lengths));
         }
 
         return hypotheses;
