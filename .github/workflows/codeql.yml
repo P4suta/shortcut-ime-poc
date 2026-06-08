@@ -20,7 +20,7 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # build-mode: none で解析するため WinUI / .NET 10 のビルドは不要。
       - name: Initialize CodeQL
